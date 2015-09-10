@@ -324,7 +324,7 @@ func (f *Folder) CreateFolder(name string) (*Folder, *http.Response, error) {
 	folder := &Folder{&Node{service: f.service}}
 	resp, err := f.service.client.Do(req, folder)
 	if err != nil {
-		return nil, nil, err
+		return nil, resp, err
 	}
 	return folder, resp, nil
 
