@@ -461,12 +461,12 @@ func (service *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, m
 	file := &File{&Node{service: service}}
 	resp, err := service.client.Do(req, file)
 	if err != nil {
-		return nil, nil, err
+		return nil, resp, err
 	}
 
 	err = <-errChan
 	if err != nil {
-		return nil, nil, err
+		return nil, resp, err
 	}
 
 	return file, resp, err
@@ -474,6 +474,53 @@ func (service *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, m
 
 // Put stores the data read from in at path as name on the Amazon Cloud Drive.
 // Errors if the file already exists on the drive.
+func (service *NodesService) putOrOverwriteSized(in io.Reader, fileSize int64, httpVerb, url, name, metadata string) (*File, *http.Response, error) {
+	var err error
+	bodyBuf := bytes.NewBufferString("")
+	bodyWriter := multipart.NewWriter(bodyBuf)
+
+	// use the bodyWriter to write the Part headers to the buffer
+	if metadata != "" {
+		err = bodyWriter.WriteField("metadata", string(metadata))
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	_, err = bodyWriter.CreateFormFile("content", name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// need to know the boundary to properly close the part myself.
+	boundary := bodyWriter.Boundary()
+	close_buf := bytes.NewBufferString(fmt.Sprintf("\r\n--%s--\r\n", boundary))
+
+	// use multi-reader to defer the reading of the file data
+	// until writing to the socket buffer.
+	request_reader := io.MultiReader(bodyBuf, in, close_buf)
+
+	req, err := service.client.NewContentRequest(httpVerb, url, request_reader)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Set headers for multipart, and Content Length
+	req.Header.Add("Content-Type", "multipart/form-data; boundary="+boundary)
+	req.ContentLength = fileSize + int64(bodyBuf.Len()) + int64(close_buf.Len())
+
+	file := &File{&Node{service: service}}
+	resp, err := service.client.Do(req, file)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	return file, resp, err
+}
+
+// Put stores the data read from in at path as name on the Amazon Cloud Drive.
+// Errors if the file already exists on the drive.
+//
+// Can't put file with 0 length file (works sometimes)
 func (f *Folder) Put(in io.Reader, name string) (*File, *http.Response, error) {
 	metadata := createNode{
 		Name:    name,
@@ -488,9 +535,32 @@ func (f *Folder) Put(in io.Reader, name string) (*File, *http.Response, error) {
 }
 
 // Overwrite updates the file contents from in
+//
+// Can't overwrite with 0 length file (works sometimes)
 func (f *File) Overwrite(in io.Reader) (*File, *http.Response, error) {
 	url := fmt.Sprintf("nodes/%s/content", *f.Id)
 	return f.service.putOrOverwrite(in, "PUT", url, *f.Name, "")
+}
+
+// Put stores the data read from in at path as name on the Amazon Cloud Drive.
+// Errors if the file already exists on the drive.
+func (f *Folder) PutSized(in io.Reader, size int64, name string) (*File, *http.Response, error) {
+	metadata := createNode{
+		Name:    name,
+		Kind:    "FILE",
+		Parents: []string{*f.Id},
+	}
+	metadataJson, err := json.Marshal(&metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f.service.putOrOverwriteSized(in, size, "POST", "nodes?suppress=deduplication", name, string(metadataJson))
+}
+
+// Overwrite updates the file contents from in
+func (f *File) OverwriteSized(in io.Reader, size int64) (*File, *http.Response, error) {
+	url := fmt.Sprintf("nodes/%s/content", *f.Id)
+	return f.service.putOrOverwriteSized(in, size, "PUT", url, *f.Name, "")
 }
 
 // Upload stores the content of file at path as name on the Amazon Cloud Drive.
