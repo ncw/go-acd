@@ -139,6 +139,7 @@ type Node struct {
 		Size *uint64 `json:"size"`
 		Md5  *string `json:"md5"`
 	} `json:"contentProperties"`
+	TempURL string `json:"tempLink"`
 
 	service *NodesService
 }
@@ -172,6 +173,32 @@ func (n *Node) Typed() interface{} {
 	}
 
 	return n
+}
+
+// GetTempURL sets the TempURL for the node passed in if it isn't already set
+func (n *Node) GetTempURL() (*http.Response, error) {
+	if n.TempURL != "" {
+		return nil, nil
+	}
+	url := fmt.Sprintf("nodes/%s?tempLink=true", *n.Id)
+	req, err := n.service.client.NewMetadataRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	node := &Node{}
+	resp, err := n.service.client.Do(req, node)
+	if err != nil {
+		return resp, err
+	}
+
+	if node.TempURL == "" {
+		return resp, fmt.Errorf("Couldn't read TempURL")
+	}
+
+	// Set the TempURL in the node
+	n.TempURL = node.TempURL
+	return resp, nil
 }
 
 // GetMetadata return a pretty-printed JSON string of the node's metadata
@@ -232,6 +259,30 @@ func (f *File) Open() (in io.ReadCloser, resp *http.Response, err error) {
 		return nil, nil, err
 	}
 	resp, err = f.service.client.Do(req, nil)
+	if err != nil {
+		return nil, resp, err
+	}
+	return resp.Body, resp, nil
+}
+
+// OpenTempURL opens the content of the file f for read from the TempURL
+//
+// Pass in an http Client (without authorization) for the download.
+//
+// You must call in.Close() when finished
+func (f *File) OpenTempURL(client *http.Client) (in io.ReadCloser, resp *http.Response, err error) {
+	resp, err = f.GetTempURL()
+	if err != nil {
+		return nil, resp, err
+	}
+	req, err := http.NewRequest("GET", f.TempURL, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if f.service.client.UserAgent != "" {
+		req.Header.Add("User-Agent", f.service.client.UserAgent)
+	}
+	resp, err = client.Do(req)
 	if err != nil {
 		return nil, resp, err
 	}
