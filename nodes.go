@@ -251,14 +251,53 @@ type File struct {
 
 // Open the content of the file f for read
 //
+// Extra headers for the GET can be passed in in headers
+//
 // You must call in.Close() when finished
-func (f *File) Open() (in io.ReadCloser, resp *http.Response, err error) {
+func (f *File) OpenHeaders(headers map[string]string) (in io.ReadCloser, resp *http.Response, err error) {
 	url := fmt.Sprintf("nodes/%s/content", *f.Id)
 	req, err := f.service.client.NewContentRequest("GET", url, nil)
 	if err != nil {
 		return nil, nil, err
 	}
+	for k, v := range headers {
+		req.Header.Add(k, v)
+	}
 	resp, err = f.service.client.Do(req, nil)
+	if err != nil {
+		return nil, resp, err
+	}
+	return resp.Body, resp, nil
+}
+
+// Open the content of the file f for read
+//
+// You must call in.Close() when finished
+func (f *File) Open() (in io.ReadCloser, resp *http.Response, err error) {
+	return f.OpenHeaders(nil)
+}
+
+// OpenTempURL opens the content of the file f for read from the TempURL
+//
+// Pass in an http Client (without authorization) for the download.
+//
+// You must call in.Close() when finished
+func (f *File) OpenTempURLHeaders(client *http.Client, headers map[string]string) (in io.ReadCloser, resp *http.Response, err error) {
+	resp, err = f.GetTempURL()
+	if err != nil {
+		return nil, resp, err
+	}
+	req, err := http.NewRequest("GET", f.TempURL, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if f.service.client.UserAgent != "" {
+		req.Header.Add("User-Agent", f.service.client.UserAgent)
+	}
+	for k, v := range headers {
+		req.Header.Add(k, v)
+	}
+	resp, err = client.Do(req)
 	if err != nil {
 		return nil, resp, err
 	}
@@ -271,22 +310,7 @@ func (f *File) Open() (in io.ReadCloser, resp *http.Response, err error) {
 //
 // You must call in.Close() when finished
 func (f *File) OpenTempURL(client *http.Client) (in io.ReadCloser, resp *http.Response, err error) {
-	resp, err = f.GetTempURL()
-	if err != nil {
-		return nil, resp, err
-	}
-	req, err := http.NewRequest("GET", f.TempURL, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if f.service.client.UserAgent != "" {
-		req.Header.Add("User-Agent", f.service.client.UserAgent)
-	}
-	resp, err = client.Do(req)
-	if err != nil {
-		return nil, resp, err
-	}
-	return resp.Body, resp, nil
+	return f.OpenTempURLHeaders(client, nil)
 }
 
 // Download fetches the content of file f and stores it into the file pointed
