@@ -136,8 +136,9 @@ type Node struct {
 	Parents           []string `json:"parents"`
 	Status            *string  `json:"status"`
 	ContentProperties *struct {
-		Size *uint64 `json:"size"`
-		Md5  *string `json:"md5"`
+		Size        *uint64 `json:"size"`
+		Md5         *string `json:"md5"`
+		ContentType *string `json:"contentType"`
 	} `json:"contentProperties"`
 	TempURL string `json:"tempLink"`
 
