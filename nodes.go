@@ -225,6 +225,47 @@ func (n *Node) GetMetadata() (string, error) {
 	return md.String(), nil
 }
 
+// Move node
+func (n *Node) Move(newParent string) (*Node, *http.Response, error) {
+	url := fmt.Sprintf("nodes/%s/children", EscapeForFilter(newParent))
+	metadata := moveNode{
+		Id : *n.Id,
+		ParentId : n.Parents[0],
+	}
+
+	req, err := n.service.client.NewMetadataRequest("POST", url, &metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	node := &Node{service: n.service}
+	resp, err := n.service.client.Do(req, node)
+	if err != nil {
+		return nil, resp, err
+	}
+	return node, resp, nil
+}
+
+// Rename node
+func (n *Node) Rename(newName string) (*Node, *http.Response, error) {
+	url := fmt.Sprintf("nodes/%s", *n.Id)
+	metadata := renameNode{
+		Name: newName,
+	}
+
+	req, err := n.service.client.NewMetadataRequest("PATCH", url, &metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	node := &Node{service: n.service}
+	resp, err := n.service.client.Do(req, node)
+	if err != nil {
+		return nil, resp, err
+	}
+	return node, resp, nil
+}
+
 // Trash places Node n into the trash.  If the node is a directory it
 // places it and all of its contents into the trash.
 func (n *Node) Trash() (*http.Response, error) {
@@ -381,6 +422,17 @@ type createNode struct {
 	Name    string   `json:"name"`
 	Kind    string   `json:"kind"`
 	Parents []string `json:"parents"`
+}
+
+// moveNode is a cut down set of parameters for moving nodes
+type moveNode struct {
+    ParentId string `json:"fromParent"`
+	Id       string `json:"childId"`
+}
+
+// renameNode is a cut down set of parameters for renaming nodes
+type renameNode struct {
+	Name string `json:"name"`
 }
 
 // CreateFolder makes a new folder with the given name.
