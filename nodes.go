@@ -612,7 +612,7 @@ func (f *Folder) WalkNodes(names ...string) (*Node, []*http.Response, error) {
 
 // Put stores the data read from in at path as name on the Amazon Cloud Drive.
 // Errors if the file already exists on the drive.
-func (s *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, metadata string) (*File, *http.Response, error) {
+func (s *NodesService) putOrOverwrite(in io.Reader, httpVerb string, headers map[string]string, url, name, metadata string) (*File, *http.Response, error) {
 	var bodyReader io.Reader
 
 	bodyReader, bodyWriter := io.Pipe()
@@ -667,6 +667,11 @@ func (s *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, metadat
 		return nil, nil, err
 	}
 
+	req.Header.Add("Content-Type", contentType)
+	for k, v := range headers {
+		req.Header.Add(k, v)
+	}
+
 	req.ContentLength = contentLength
 	req.Header.Add("Content-Type", contentType)
 
@@ -691,13 +696,138 @@ func (f *Folder) Put(in io.Reader, name string) (*File, *http.Response, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return f.service.putOrOverwrite(in, "POST", "nodes?suppress=deduplication", name, string(metadataJSON))
+	return f.service.putOrOverwrite(in, "POST", nil, "nodes?suppress=deduplication", name, string(metadataJSON))
+}
+
+// createNodeResume is a cut down set of parameters for creating nodes with resume
+type createNodeResume struct {
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind"`
+	Parents []string `json:"parents"`
+	Size    int64    `json:"size"`
+	MD5     *string  `json:"md5"`
+}
+
+// PutWithResume stores the data read from in at path as name on the Amazon Cloud Drive.
+// Errors if the file already exists on the drive.
+//
+// Can't put file with 0 length file (works sometimes)
+func (f *Folder) PutWithResume(in io.Reader, name string, size int64, localID, md5sum string) (*File, *http.Response, error) {
+	metadata := createNodeResume{
+		Name:    name,
+		Kind:    "FILE",
+		Parents: []string{*f.Id},
+		Size:    size,
+	}
+	if md5sum != "" {
+		metadata.MD5 = &md5sum
+	}
+	metadataJson, err := json.Marshal(&metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f.service.putOrOverwrite(in, "POST", nil, "nodes?suppress=deduplication&localId="+localID, name, string(metadataJson))
+}
+
+// ResumeStatus is the reply from the resume endpoint
+type ResumeStatus struct {
+	ExpectedBytes int64  `json:"expectedBytes"` // 42531062352
+	Started       string `json:"started"`       // '2016-11-02T16:32:29.835Z'
+	NodeID        string `json:"nodeId"`        // 'X-bnJSehNxmjdshRVob3MA'
+	ExpectedMD5   string `json:"expectedMd5"`   // '7933dbadc40850450201a886e8e69cbc'
+	ContentLink   string `json:"contentLink"`   // 'https://content-eu.drive.amazonaws.com/cdproxy/nodes/X-bnJSehNxmjdshRVob3MA/content'
+	UploadState   string `json:"uploadState"`   // 'IN_PROGRESS'
+	ReceivedBytes int64  `json:"receivedBytes"` // 26222752
+}
+
+// ResumeStatus returns the status of a file uploaded with
+// PutWithResume or OverwriteWithResume.  Use the same localID as that
+// call.
+func (f *Folder) GetResumeStatus(localID string) (*ResumeStatus, *http.Response, error) {
+	url := "resume?localId=" + localID
+	req, err := f.service.client.NewContentRequest("GET", url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resumeStatus := &ResumeStatus{}
+	resp, err := f.service.client.Do(req, resumeStatus)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	return resumeStatus, resp, nil
+}
+
+// Resume the upload given a ResumeStatus
+//
+// It is up to the caller to ensure that the io.Reader is positioned in the correct place
+func (f *Folder) Resume(resume *ResumeStatus, in io.Reader, name string) (*File, *http.Response, error) {
+	headers := map[string]string{
+		"Content-Range":       fmt.Sprintf("bytes %d-%d/%d", resume.ReceivedBytes, resume.ExpectedBytes-1, resume.ExpectedBytes),
+		"Accept":              "application/json",
+		"Content-Type":        "application/octet-stream",
+		"Content-Disposition": fmt.Sprintf("form-data; name=file; filename=%s", resume.ExpectedMD5),
+	}
+
+	url := fmt.Sprintf("nodes/%s/content", resume.NodeID)
+	req, err := f.service.client.NewContentRequest("PUT", url, in)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for k, v := range headers {
+		req.Header.Add(k, v)
+	}
+
+	file := &File{&Node{service: f.service}}
+	resp, err := f.service.client.Do(req, file)
+	if err != nil {
+		return nil, resp, err
+	}
+	return file, resp, nil
+
+	// // Make a temporary skeleton File
+	// file := &File{
+	// 	Node: &Node{
+	// 		Id:      &resume.NodeID,
+	// 		Name:    &name,
+	// 		service: f.service,
+	// 	},
+	// }
+
+	// return file.OverwriteHeaders(in, headers)
+}
+
+// FIleFromID reads a *File structure given an ID
+func (f *Folder) FileFromID(ID string) (*File, *http.Response, error) {
+	url := fmt.Sprintf("nodes/%s", ID)
+	req, err := f.service.client.NewMetadataRequest("GET", url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	file := &File{&Node{service: f.service}}
+	resp, err := f.service.client.Do(req, file)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	return file, resp, nil
 }
 
 // Overwrite updates the file contents from in
 func (f *File) Overwrite(in io.Reader) (*File, *http.Response, error) {
 	url := fmt.Sprintf("nodes/%s/content", *f.Id)
-	return f.service.putOrOverwrite(in, "PUT", url, *f.Name, "")
+	return f.service.putOrOverwrite(in, "PUT", nil, url, *f.Name, "")
+}
+
+// OverwriteHeaders updates the file contents from in
+//
+// Can't overwrite with 0 length file (works sometimes)
+func (f *File) OverwriteHeaders(in io.Reader, headers map[string]string) (*File, *http.Response, error) {
+	url := fmt.Sprintf("nodes/%s/content", *f.Id)
+	return f.service.putOrOverwrite(in, "PUT", headers, url, *f.Name, "")
 }
 
 // PutSized stores the data read from in at path as name on the Amazon
