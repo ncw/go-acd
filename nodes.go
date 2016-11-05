@@ -225,25 +225,82 @@ func (n *Node) GetMetadata() (string, error) {
 	return md.String(), nil
 }
 
-// Move node
-func (n *Node) Move(newParent string) (*Node, *http.Response, error) {
-	url := fmt.Sprintf("nodes/%s/children", EscapeForFilter(newParent))
-	metadata := moveNode{
-		Id:       *n.Id,
-		ParentId: n.Parents[0],
+type replaceParent struct {
+	FromParent string `json:"fromParent"`
+	ChildId    string `json:"childId"`
+}
+
+// Puts Node n below a new parent while removing the old one at the same time.
+// This is equivalent to calling AddParent and RemoveParent sequentially, but
+// only needs one REST call. Can return a 409 Conflict if there's already a
+// file or folder in the new location with the same name as Node n.
+func (n *Node) ReplaceParent(oldParentId string, newParentId string) (*http.Response, error) {
+	body := &replaceParent{
+		FromParent: oldParentId,
+		ChildId:    *n.Id,
+	}
+	url := fmt.Sprintf("nodes/%s/children", newParentId)
+	req, err := n.service.client.NewMetadataRequest("POST", url, &body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := n.service.client.Do(req, nil)
+	if err != nil {
+		return resp, err
+	}
+	n.Parents = []string{newParentId}
+
+	err = resp.Body.Close()
+	return resp, err
+}
+
+// Adds an additional parent to Node n. Can return a 409 Conflict if there's
+// already a file or folder below the new parent with the same name as Node n.
+func (n *Node) AddParent(newParentId string) (*http.Response, error) {
+	return n.changeParents(newParentId, true)
+}
+
+// Removes a parent from Node n. If all parents are removed, the file is instead
+// attached to the absolute root folder of AmazonDrive.
+func (n *Node) RemoveParent(parentId string) (*http.Response, error) {
+	return n.changeParents(parentId, false)
+}
+
+func (n *Node) changeParents(parentId string, add bool) (*http.Response, error) {
+	method := "DELETE"
+	if add {
+		method = "PUT"
 	}
 
-	req, err := n.service.client.NewMetadataRequest("POST", url, &metadata)
+	url := fmt.Sprintf("nodes/%s/children/%s", parentId, *n.Id)
+	req, err := n.service.client.NewMetadataRequest(method, url, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	resp, err := n.service.client.Do(req, nil)
+	if err != nil {
+		return resp, err
+	}
+	if add {
+		n.Parents = append(n.Parents, parentId)
+	} else {
+		var removeIndex int
+		for i := 0; i < len(n.Parents); i++ {
+			if n.Parents[i] == parentId {
+				removeIndex = i
+				break
+			}
+		}
+		n.Parents = append(n.Parents[:removeIndex], n.Parents[removeIndex+1:]...)
 	}
 
-	node := &Node{service: n.service}
-	resp, err := n.service.client.Do(req, node)
-	if err != nil {
-		return nil, resp, err
-	}
-	return node, resp, nil
+	err = resp.Body.Close()
+	return resp, err
+}
+
+// renameNode is a cut down set of parameters for renaming nodes
+type renameNode struct {
+	Name string `json:"name"`
 }
 
 // Rename node
@@ -253,17 +310,14 @@ func (n *Node) Rename(newName string) (*Node, *http.Response, error) {
 		Name: newName,
 	}
 
+	node := &Node{service: n.service}
 	req, err := n.service.client.NewMetadataRequest("PATCH", url, &metadata)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	node := &Node{service: n.service}
 	resp, err := n.service.client.Do(req, node)
-	if err != nil {
-		return nil, resp, err
-	}
-	return node, resp, nil
+	return node, resp, err
 }
 
 // Trash places Node n into the trash.  If the node is a directory it
@@ -284,6 +338,22 @@ func (n *Node) Trash() (*http.Response, error) {
 	}
 	return resp, nil
 
+}
+
+// Restore moves a previously trashed Node n back into all its connected parents
+func (n *Node) Restore() (*Node, *http.Response, error) {
+	url := fmt.Sprintf("trash/%s/restore", *n.Id)
+	req, err := n.service.client.NewMetadataRequest("POST", url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	node := &Node{service: n.service}
+	resp, err := n.service.client.Do(req, node)
+	if err != nil {
+		return nil, resp, err
+	}
+	err = resp.Body.Close()
+	return node, resp, err
 }
 
 // File represents a file on the Amazon Cloud Drive.
@@ -422,17 +492,6 @@ type createNode struct {
 	Name    string   `json:"name"`
 	Kind    string   `json:"kind"`
 	Parents []string `json:"parents"`
-}
-
-// moveNode is a cut down set of parameters for moving nodes
-type moveNode struct {
-	ParentId string `json:"fromParent"`
-	Id       string `json:"childId"`
-}
-
-// renameNode is a cut down set of parameters for renaming nodes
-type renameNode struct {
-	Name string `json:"name"`
 }
 
 // CreateFolder makes a new folder with the given name.
