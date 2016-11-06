@@ -22,6 +22,7 @@ import (
 )
 
 var (
+	// ErrorNodeNotFound is returned from GetFile, GetFolder, GetNode
 	ErrorNodeNotFound = errors.New("Node not found")
 )
 
@@ -32,7 +33,7 @@ type NodesService struct {
 	client *Client
 }
 
-// Gets the root folder of the Amazon Cloud Drive.
+// GetRoot gets the root folder of the Amazon Cloud Drive.
 func (s *NodesService) GetRoot() (*Folder, *http.Response, error) {
 	opts := &NodeListOptions{Filters: "kind:FOLDER AND isRoot:true"}
 
@@ -48,12 +49,12 @@ func (s *NodesService) GetRoot() (*Folder, *http.Response, error) {
 	return &Folder{roots[0]}, resp, nil
 }
 
-// Gets the list of all nodes.
+// GetAllNodes gets the list of all nodes.
 func (s *NodesService) GetAllNodes(opts *NodeListOptions) ([]*Node, *http.Response, error) {
 	return s.listAllNodes("nodes", opts)
 }
 
-// Gets a list of nodes, up until the limit (either default or the one set in opts).
+// GetNodes gets a list of nodes, up until the limit (either default or the one set in opts).
 func (s *NodesService) GetNodes(opts *NodeListOptions) ([]*Node, *http.Response, error) {
 	nodes, res, err := s.listNodes("nodes", opts)
 	return nodes, res, err
@@ -146,9 +147,9 @@ type Node struct {
 }
 
 // NodeFromId constructs a skeleton Node from an Id and a NodeService
-func NodeFromId(Id string, service *NodesService) *Node {
+func NodeFromId(ID string, service *NodesService) *Node {
 	return &Node{
-		Id:      &Id,
+		Id:      &ID,
 		service: service,
 	}
 }
@@ -227,19 +228,19 @@ func (n *Node) GetMetadata() (string, error) {
 
 type replaceParent struct {
 	FromParent string `json:"fromParent"`
-	ChildId    string `json:"childId"`
+	ChildID    string `json:"childId"`
 }
 
-// Puts Node n below a new parent while removing the old one at the same time.
+// ReplaceParent puts Node n below a new parent while removing the old one at the same time.
 // This is equivalent to calling AddParent and RemoveParent sequentially, but
 // only needs one REST call. Can return a 409 Conflict if there's already a
 // file or folder in the new location with the same name as Node n.
-func (n *Node) ReplaceParent(oldParentId string, newParentId string) (*http.Response, error) {
+func (n *Node) ReplaceParent(oldParentID string, newParentID string) (*http.Response, error) {
 	body := &replaceParent{
-		FromParent: oldParentId,
-		ChildId:    *n.Id,
+		FromParent: oldParentID,
+		ChildID:    *n.Id,
 	}
-	url := fmt.Sprintf("nodes/%s/children", newParentId)
+	url := fmt.Sprintf("nodes/%s/children", newParentID)
 	req, err := n.service.client.NewMetadataRequest("POST", url, &body)
 	if err != nil {
 		return nil, err
@@ -248,31 +249,31 @@ func (n *Node) ReplaceParent(oldParentId string, newParentId string) (*http.Resp
 	if err != nil {
 		return resp, err
 	}
-	n.Parents = []string{newParentId}
+	n.Parents = []string{newParentID}
 
 	err = resp.Body.Close()
 	return resp, err
 }
 
-// Adds an additional parent to Node n. Can return a 409 Conflict if there's
+// AddParent adds an additional parent to Node n. Can return a 409 Conflict if there's
 // already a file or folder below the new parent with the same name as Node n.
-func (n *Node) AddParent(newParentId string) (*http.Response, error) {
-	return n.changeParents(newParentId, true)
+func (n *Node) AddParent(newParentID string) (*http.Response, error) {
+	return n.changeParents(newParentID, true)
 }
 
-// Removes a parent from Node n. If all parents are removed, the file is instead
+// RemoveParent removes a parent from Node n. If all parents are removed, the file is instead
 // attached to the absolute root folder of AmazonDrive.
-func (n *Node) RemoveParent(parentId string) (*http.Response, error) {
-	return n.changeParents(parentId, false)
+func (n *Node) RemoveParent(parentID string) (*http.Response, error) {
+	return n.changeParents(parentID, false)
 }
 
-func (n *Node) changeParents(parentId string, add bool) (*http.Response, error) {
+func (n *Node) changeParents(parentID string, add bool) (*http.Response, error) {
 	method := "DELETE"
 	if add {
 		method = "PUT"
 	}
 
-	url := fmt.Sprintf("nodes/%s/children/%s", parentId, *n.Id)
+	url := fmt.Sprintf("nodes/%s/children/%s", parentID, *n.Id)
 	req, err := n.service.client.NewMetadataRequest(method, url, nil)
 	if err != nil {
 		return nil, err
@@ -282,11 +283,11 @@ func (n *Node) changeParents(parentId string, add bool) (*http.Response, error) 
 		return resp, err
 	}
 	if add {
-		n.Parents = append(n.Parents, parentId)
+		n.Parents = append(n.Parents, parentID)
 	} else {
 		var removeIndex int
 		for i := 0; i < len(n.Parents); i++ {
-			if n.Parents[i] == parentId {
+			if n.Parents[i] == parentID {
 				removeIndex = i
 				break
 			}
@@ -361,7 +362,7 @@ type File struct {
 	*Node
 }
 
-// Open the content of the file f for read
+// OpenHeaders opens the content of the file f for read
 //
 // Extra headers for the GET can be passed in in headers
 //
@@ -389,7 +390,7 @@ func (f *File) Open() (in io.ReadCloser, resp *http.Response, err error) {
 	return f.OpenHeaders(nil)
 }
 
-// OpenTempURL opens the content of the file f for read from the TempURL
+// OpenTempURLHeaders opens the content of the file f for read from the TempURL
 //
 // Pass in an http Client (without authorization) for the download.
 //
@@ -451,25 +452,27 @@ type Folder struct {
 }
 
 // FolderFromId constructs a skeleton Folder from an Id and a NodeService
-func FolderFromId(Id string, service *NodesService) *Folder {
+func FolderFromId(ID string, service *NodesService) *Folder {
 	return &Folder{
-		Node: NodeFromId(Id, service),
+		Node: NodeFromId(ID, service),
 	}
 }
 
-// Gets the list of all children.
+// GetAllChildren gets the list of all children.
 func (f *Folder) GetAllChildren(opts *NodeListOptions) ([]*Node, *http.Response, error) {
 	url := fmt.Sprintf("nodes/%s/children", *f.Id)
 	return f.service.listAllNodes(url, opts)
 }
 
-// Gets a list of children, up until the limit (either default or the one set in opts).
+// GetChildren gets a list of children, up until the limit (either
+// default or the one set in opts).
 func (f *Folder) GetChildren(opts *NodeListOptions) ([]*Node, *http.Response, error) {
 	url := fmt.Sprintf("nodes/%s/children", *f.Id)
 	return f.service.listNodes(url, opts)
 }
 
-// Gets the subfolder by name. It is an error if not exactly one subfolder is found.
+// GetFolder gets the subfolder by name. It is an error if not exactly
+// one subfolder is found.
 //
 // If it isn't found then it returns the error ErrorNodeNotFound
 func (f *Folder) GetFolder(name string) (*Folder, *http.Response, error) {
@@ -480,7 +483,7 @@ func (f *Folder) GetFolder(name string) (*Folder, *http.Response, error) {
 
 	res, ok := n.Typed().(*Folder)
 	if !ok {
-		err := errors.New(fmt.Sprintf("Node '%s' is not a folder", name))
+		err := fmt.Errorf("Node '%s' is not a folder", name)
 		return nil, resp, err
 	}
 
@@ -517,7 +520,7 @@ func (f *Folder) CreateFolder(name string) (*Folder, *http.Response, error) {
 
 }
 
-// Gets the file by name. It is an error if not exactly one file is found.
+// GetFile gets the file by name. It is an error if not exactly one file is found.
 //
 // If it isn't found then it returns the error ErrorNodeNotFound
 func (f *Folder) GetFile(name string) (*File, *http.Response, error) {
@@ -528,7 +531,7 @@ func (f *Folder) GetFile(name string) (*File, *http.Response, error) {
 
 	res, ok := n.Typed().(*File)
 	if !ok {
-		err := errors.New(fmt.Sprintf("Node '%s' is not a file", name))
+		err := fmt.Errorf("Node '%s' is not a file", name)
 		return nil, resp, err
 	}
 
@@ -551,7 +554,7 @@ func EscapeForFilter(s string) string {
 	return escapeForFilterRe.ReplaceAllString(s, `\$1`)
 }
 
-// Gets the node by name. It is an error if not exactly one node is found.
+// GetNode gets the node by name. It is an error if not exactly one node is found.
 //
 // If it isn't found then it returns the error ErrorNodeNotFound
 func (f *Folder) GetNode(name string) (*Node, *http.Response, error) {
@@ -567,7 +570,7 @@ func (f *Folder) GetNode(name string) (*Node, *http.Response, error) {
 		return nil, resp, ErrorNodeNotFound
 	}
 	if len(nodes) > 1 {
-		err := errors.New(fmt.Sprintf("Too many nodes '%s' found (%v)", name, len(nodes)))
+		err := fmt.Errorf("Too many nodes '%s' found (%v)", name, len(nodes))
 		return nil, resp, err
 	}
 
@@ -608,7 +611,7 @@ func (f *Folder) WalkNodes(names ...string) (*Node, []*http.Response, error) {
 
 // Put stores the data read from in at path as name on the Amazon Cloud Drive.
 // Errors if the file already exists on the drive.
-func (service *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, metadata string) (*File, *http.Response, error) {
+func (s *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, metadata string) (*File, *http.Response, error) {
 	bodyReader, bodyWriter := io.Pipe()
 	writer := multipart.NewWriter(bodyWriter)
 	contentType := writer.FormDataContentType()
@@ -638,15 +641,15 @@ func (service *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, m
 		errChan <- writer.Close()
 	}()
 
-	req, err := service.client.NewContentRequest(httpVerb, url, bodyReader)
+	req, err := s.client.NewContentRequest(httpVerb, url, bodyReader)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	req.Header.Add("Content-Type", contentType)
 
-	file := &File{&Node{service: service}}
-	resp, err := service.client.Do(req, file)
+	file := &File{&Node{service: s}}
+	resp, err := s.client.Do(req, file)
 	if err != nil {
 		return nil, resp, err
 	}
@@ -661,7 +664,7 @@ func (service *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, m
 
 // Put stores the data read from in at path as name on the Amazon Cloud Drive.
 // Errors if the file already exists on the drive.
-func (service *NodesService) putOrOverwriteSized(in io.Reader, fileSize int64, httpVerb, url, name, metadata string) (*File, *http.Response, error) {
+func (s *NodesService) putOrOverwriteSized(in io.Reader, fileSize int64, httpVerb, url, name, metadata string) (*File, *http.Response, error) {
 	var err error
 	bodyBuf := bytes.NewBufferString("")
 	bodyWriter := multipart.NewWriter(bodyBuf)
@@ -680,23 +683,23 @@ func (service *NodesService) putOrOverwriteSized(in io.Reader, fileSize int64, h
 
 	// need to know the boundary to properly close the part myself.
 	boundary := bodyWriter.Boundary()
-	close_buf := bytes.NewBufferString(fmt.Sprintf("\r\n--%s--\r\n", boundary))
+	closeBuf := bytes.NewBufferString(fmt.Sprintf("\r\n--%s--\r\n", boundary))
 
 	// use multi-reader to defer the reading of the file data
 	// until writing to the socket buffer.
-	request_reader := io.MultiReader(bodyBuf, in, close_buf)
+	requestReader := io.MultiReader(bodyBuf, in, closeBuf)
 
-	req, err := service.client.NewContentRequest(httpVerb, url, request_reader)
+	req, err := s.client.NewContentRequest(httpVerb, url, requestReader)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Set headers for multipart, and Content Length
 	req.Header.Add("Content-Type", "multipart/form-data; boundary="+boundary)
-	req.ContentLength = fileSize + int64(bodyBuf.Len()) + int64(close_buf.Len())
+	req.ContentLength = fileSize + int64(bodyBuf.Len()) + int64(closeBuf.Len())
 
-	file := &File{&Node{service: service}}
-	resp, err := service.client.Do(req, file)
+	file := &File{&Node{service: s}}
+	resp, err := s.client.Do(req, file)
 	if err != nil {
 		return nil, resp, err
 	}
@@ -714,11 +717,11 @@ func (f *Folder) Put(in io.Reader, name string) (*File, *http.Response, error) {
 		Kind:    "FILE",
 		Parents: []string{*f.Id},
 	}
-	metadataJson, err := json.Marshal(&metadata)
+	metadataJSON, err := json.Marshal(&metadata)
 	if err != nil {
 		return nil, nil, err
 	}
-	return f.service.putOrOverwrite(in, "POST", "nodes?suppress=deduplication", name, string(metadataJson))
+	return f.service.putOrOverwrite(in, "POST", "nodes?suppress=deduplication", name, string(metadataJSON))
 }
 
 // Overwrite updates the file contents from in
@@ -729,22 +732,22 @@ func (f *File) Overwrite(in io.Reader) (*File, *http.Response, error) {
 	return f.service.putOrOverwrite(in, "PUT", url, *f.Name, "")
 }
 
-// Put stores the data read from in at path as name on the Amazon Cloud Drive.
-// Errors if the file already exists on the drive.
+// PutSized stores the data read from in at path as name on the Amazon
+// Cloud Drive.  Errors if the file already exists on the drive.
 func (f *Folder) PutSized(in io.Reader, size int64, name string) (*File, *http.Response, error) {
 	metadata := createNode{
 		Name:    name,
 		Kind:    "FILE",
 		Parents: []string{*f.Id},
 	}
-	metadataJson, err := json.Marshal(&metadata)
+	metadataJSON, err := json.Marshal(&metadata)
 	if err != nil {
 		return nil, nil, err
 	}
-	return f.service.putOrOverwriteSized(in, size, "POST", "nodes?suppress=deduplication", name, string(metadataJson))
+	return f.service.putOrOverwriteSized(in, size, "POST", "nodes?suppress=deduplication", name, string(metadataJSON))
 }
 
-// Overwrite updates the file contents from in
+// OverwriteSized updates the file contents from in
 func (f *File) OverwriteSized(in io.Reader, size int64) (*File, *http.Response, error) {
 	url := fmt.Sprintf("nodes/%s/content", *f.Id)
 	return f.service.putOrOverwriteSized(in, size, "PUT", url, *f.Name, "")
