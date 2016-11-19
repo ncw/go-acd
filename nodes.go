@@ -6,7 +6,6 @@
 package acd
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -621,9 +620,13 @@ func (s *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, metadat
 	contentType := writer.FormDataContentType()
 	contentLength := int64(-1)
 
-	bufIn := bufio.NewReader(in)
-	_, err := bufIn.Peek(1)
-	isZeroLength := err != nil
+	buf := make([]byte, 1)
+	n, err := io.ReadFull(in, buf)
+	isZeroLength := err == io.EOF
+	if !isZeroLength && err != nil {
+		return nil, nil, err
+	}
+	in = io.MultiReader(bytes.NewReader(buf[:n]), in)
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -643,7 +646,7 @@ func (s *NodesService) putOrOverwrite(in io.Reader, httpVerb, url, name, metadat
 			errChan <- err
 			return
 		}
-		if _, err := io.Copy(part, bufIn); err != nil {
+		if _, err := io.Copy(part, in); err != nil {
 			errChan <- err
 			return
 		}
